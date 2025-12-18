@@ -21,7 +21,7 @@ dockers:
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.description=Kubernetes operator for generating and managing secrets with support for passwords, static values, and templated secrets"
+      - "--label=org.opencontainers.image.description=Kubernetes controller that coordinates the rollout of multiple deployments to ensure only one deployment rolls out at a time"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
@@ -35,7 +35,7 @@ dockers:
     build_flag_templates:
       - "--platform=linux/arm64/v8"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.description=Kubernetes operator for generating and managing secrets with support for passwords, static values, and templated secrets"
+      - "--label=org.opencontainers.image.description=Kubernetes controller that coordinates the rollout of multiple deployments to ensure only one deployment rolls out at a time"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
       - "--label=org.opencontainers.image.version={{ .Version }}"
       - "--label=org.opencontainers.image.created={{ .Date }}"
