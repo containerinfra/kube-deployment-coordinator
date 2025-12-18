@@ -3,7 +3,7 @@ module github.com/containerinfra/kube-deployment-coordinator
 go 1.25.0
 
 require (
-	github.com/go-logr/logr v1.4.2
+	github.com/go-logr/logr v1.4.3
 	github.com/onsi/ginkgo/v2 v2.21.0
 	github.com/onsi/gomega v1.35.1
 	k8s.io/api v0.34.0
