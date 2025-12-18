@@ -63,6 +63,11 @@ spec:
           volumeMounts:
             - name: tempdir
               mountPath: /tmp
+            {{- if and .Values.webhook.enabled .Values.webhook.certManager.enabled }}
+            - name: cert
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       livenessProbe:
@@ -73,6 +78,12 @@ spec:
       volumes:
         - name: tempdir
           emptyDir: {}
+        {{- if and .Values.webhook.enabled .Values.webhook.certManager.enabled }}
+        - name: cert
+          secret:
+            secretName: {{ .Values.webhook.certManager.secretName | default "webhook-server-cert" }}
+            defaultMode: 420
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

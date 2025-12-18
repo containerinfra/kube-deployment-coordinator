@@ -13,10 +13,40 @@ This chart includes:
 - Mutating webhook for automatically pausing non-active deployments
 - Service account and RBAC permissions
 - Optional ServiceMonitor for Prometheus metrics
+- Optional cert-manager integration for webhook TLS certificates
 
 ## Source Code
 
 * <https://github.com/containerinfra/kube-deployment-coordinator>
+
+## Cert-Manager Integration
+
+The chart supports using cert-manager for automatic TLS certificate management for the webhook. To enable cert-manager:
+
+```yaml
+webhook:
+  enabled: true
+  certManager:
+    enabled: true
+    # Create a self-signed issuer (default: true)
+    createIssuer: true
+    # Or use an existing issuer
+    # createIssuer: false
+    # issuerName: my-existing-issuer
+    # Or use a ClusterIssuer
+    # issuerRef:
+    #   kind: ClusterIssuer
+    #   name: letsencrypt-prod
+```
+
+When `certManager.enabled` is `true`:
+- A `Certificate` resource will be created for the webhook
+- An optional self-signed `Issuer` will be created if `createIssuer` is `true`
+- The certificate secret will be automatically mounted in the controller pod
+- The `MutatingWebhookConfiguration` will be annotated for automatic CA injection by cert-manager
+- The `caBundle` field in the webhook configuration will be automatically populated
+
+**Note:** Ensure cert-manager is installed in your cluster before enabling this feature.
 
 ## Values
 

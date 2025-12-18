@@ -6,10 +6,13 @@ metadata:
   labels:
     {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
     app.kubernetes.io/component: webhook
-  {{- with .Values.webhook.annotations }}
   annotations:
+    {{- if and .Values.webhook.enabled .Values.webhook.certManager.enabled }}
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ .Values.webhook.certManager.certificateName | default "webhook-serving-cert" }}
+    {{- end }}
+    {{- with .Values.webhook.annotations }}
     {{- toYaml . | nindent 4 }}
-  {{- end }}
+    {{- end }}
 webhooks:
 - name: {{ .Values.webhook.webhookName | default "kube-deployment-coordinator.containerinfra.nl" }}
   clientConfig:
@@ -17,7 +20,7 @@ webhooks:
       namespace: {{ .Release.Namespace }}
       name: {{ .Values.webhook.serviceName | default "webhook-service" }}
       path: {{ .Values.webhook.path | default "/mutate-apps-v1-deployment" }}
-    {{- if .Values.webhook.caBundle }}
+    {{- if and (not .Values.webhook.certManager.enabled) .Values.webhook.caBundle }}
     caBundle: {{ .Values.webhook.caBundle }}
     {{- end }}
   rules:

@@ -1,0 +1,28 @@
+{{- if and .Values.webhook.enabled .Values.webhook.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.webhook.certManager.certificateName | default "webhook-serving-cert" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+spec:
+  dnsNames:
+  - {{ .Values.webhook.serviceName | default "webhook-service" }}.{{ .Release.Namespace }}.svc
+  - {{ .Values.webhook.serviceName | default "webhook-service" }}.{{ .Release.Namespace }}.svc.cluster.local
+  {{- if .Values.webhook.certManager.dnsNames }}
+  {{- range .Values.webhook.certManager.dnsNames }}
+  - {{ . }}
+  {{- end }}
+  {{- end }}
+  issuerRef:
+    {{- if .Values.webhook.certManager.issuerRef }}
+    {{- toYaml .Values.webhook.certManager.issuerRef | nindent 4 }}
+    {{- else }}
+    kind: Issuer
+    name: {{ .Values.webhook.certManager.issuerName | default "selfsigned-issuer" }}
+    {{- end }}
+  secretName: {{ .Values.webhook.certManager.secretName | default "webhook-server-cert" }}
+{{- end }}
+

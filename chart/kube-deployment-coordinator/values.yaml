@@ -137,7 +137,26 @@ webhook:
   # Failure policy (Ignore or Fail)
   failurePolicy: Ignore
   # CA bundle for the webhook (if using cert-manager, this will be injected automatically)
+  # Only used if certManager.enabled is false
   caBundle: ""
+  # Cert-manager configuration for webhook certificates
+  certManager:
+    # Enable cert-manager for webhook certificates
+    enabled: false
+    # Create a self-signed issuer (set to false if using an existing issuer)
+    createIssuer: true
+    # Name of the issuer to use (only used if createIssuer is false)
+    issuerName: selfsigned-issuer
+    # Custom issuer reference (overrides issuerName if set)
+    # issuerRef:
+    #   kind: ClusterIssuer
+    #   name: letsencrypt-prod
+    # Name of the Certificate resource
+    certificateName: webhook-serving-cert
+    # Name of the secret where certificates will be stored
+    secretName: webhook-server-cert
+    # Additional DNS names for the certificate (optional)
+    # dnsNames: []
   # Annotations to add to the MutatingWebhookConfiguration
   annotations: {}
   # Namespace selector for the webhook (optional)

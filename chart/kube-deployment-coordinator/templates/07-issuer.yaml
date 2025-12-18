@@ -1,0 +1,13 @@
+{{- if and .Values.webhook.enabled .Values.webhook.certManager.enabled .Values.webhook.certManager.createIssuer }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.webhook.certManager.issuerName | default "selfsigned-issuer" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+spec:
+  selfSigned: {}
+{{- end }}
+
