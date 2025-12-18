@@ -5,7 +5,9 @@ metadata:
   name: {{ .Values.webhook.serviceName | default "webhook-service" }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+    {{- include "kubeDeploymentCoordinator.baseLabels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "kubeDeploymentCoordinator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: webhook
 spec:
   type: ClusterIP

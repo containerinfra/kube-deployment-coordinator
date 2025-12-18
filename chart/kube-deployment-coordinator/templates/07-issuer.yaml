@@ -5,7 +5,7 @@ metadata:
   name: {{ .Values.webhook.certManager.issuerName | default "selfsigned-issuer" }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+    {{- include "kubeDeploymentCoordinator.baseLabels" . | nindent 4 }}
     app.kubernetes.io/component: webhook
 spec:
   selfSigned: {}

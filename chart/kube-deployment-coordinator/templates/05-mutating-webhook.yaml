@@ -4,7 +4,7 @@ kind: MutatingWebhookConfiguration
 metadata:
   name: {{ .Values.webhook.name | default (printf "%s-webhook" (include "kubeDeploymentCoordinator.name" .)) }}
   labels:
-    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+    {{- include "kubeDeploymentCoordinator.baseLabels" . | nindent 4 }}
     app.kubernetes.io/component: webhook
   annotations:
     {{- if and .Values.webhook.enabled .Values.webhook.certManager.enabled }}
