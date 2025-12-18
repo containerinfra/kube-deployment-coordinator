@@ -246,7 +246,7 @@ var _ = Describe("DeploymentCoordination Controller", func() {
 				NamespacedName: coordinationNamespace,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Requeue).To(BeFalse())
+			Expect(result.RequeueAfter).To(BeZero())
 
 			By("Verifying the first deployment is active and unpaused")
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "deployment-1", Namespace: namespace}, deployment1)).To(Succeed())
@@ -285,7 +285,7 @@ var _ = Describe("DeploymentCoordination Controller", func() {
 				NamespacedName: coordinationNamespace,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.Requeue).To(BeFalse())
+			Expect(result.RequeueAfter).To(BeZero())
 
 			By("Verifying deployment-1 is no longer active")
 			Expect(k8sClient.Get(ctx, coordinationNamespace, coordination)).To(Succeed())
