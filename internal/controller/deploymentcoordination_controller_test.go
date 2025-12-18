@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	appsv1 "github.com/containerinfra/kube-deployment-coordinator/api/v1"
@@ -56,9 +57,13 @@ var _ = Describe("DeploymentCoordination Controller", func() {
 				Namespace: namespace,
 			}
 
+			// Create a fake event recorder for testing
+			eventRecorder := record.NewFakeRecorder(100)
+
 			reconciler = &DeploymentCoordinationReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: eventRecorder,
 			}
 
 			By("Creating a DeploymentCoordination resource")

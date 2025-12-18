@@ -111,6 +111,7 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 
 	// Get current active deployment from status
 	activeDeploymentKey := coordination.Status.ActiveDeployment
+	var previousActiveDeploymentKey string // Track if we just cleared an active deployment
 
 	// Find the active deployment if it exists
 	var activeDeployment *appsv1k8s.Deployment
@@ -122,6 +123,7 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 			logger.Info("active deployment no longer matches selector, clearing", "activeDeployment", activeDeploymentKey)
 			r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "ActiveDeploymentCleared",
 				"Active deployment %s no longer matches selector, cleared from coordination", activeDeploymentKey)
+			previousActiveDeploymentKey = activeDeploymentKey
 			activeDeploymentKey = ""
 		}
 	}
@@ -162,6 +164,9 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 		logger.Info("active deployment finished rolling out and ready", "deployment", activeDeploymentKey)
 		r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "ActiveDeploymentReady",
 			"Active deployment %s finished rolling out and is ready", activeDeploymentKey)
+		// Store the previously active deployment key to skip it in the next pass
+		// This prevents immediately reactivating a deployment that just finished
+		previousActiveDeploymentKey = activeDeploymentKey
 		activeDeploymentKey = ""
 		activeDeployment = nil
 	}
@@ -250,6 +255,17 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 		}
 	}
 
+	// Refresh all deployments in the map before second pass to ensure we have latest status
+	// This is important after pausing/unpausing operations
+	for _, key := range sortedKeys {
+		if err := r.Get(ctx, types.NamespacedName{
+			Namespace: deploymentMap[key].Namespace,
+			Name:      deploymentMap[key].Name,
+		}, deploymentMap[key]); err != nil {
+			logger.V(1).Info("unable to refresh deployment in map", "deployment", key, "error", err)
+		}
+	}
+
 	// Second pass: Determine which deployment should be active (if any)
 	// This ensures deterministic activation order based on sorted keys
 	if activeDeployment == nil {
@@ -280,7 +296,14 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 		}
 
 		// Find the first deployment that needs rollout (in sorted order for determinism)
+		// Skip the deployment that just finished rolling out to avoid immediately reactivating it
 		for _, key := range sortedKeys {
+			// Skip the deployment that just finished (if any)
+			if key == previousActiveDeploymentKey {
+				logger.V(1).Info("skipping deployment that just finished rolling out", "deployment", key)
+				continue
+			}
+
 			deployment := deploymentMap[key]
 			needsRollout := r.needsRollout(deployment)
 
@@ -327,7 +350,12 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 	// Recalculate deployment states right before updating status to ensure accuracy
 	// This is important because deployments may have been updated during the reconcile loop
 	oldActiveDeploymentKey := coordination.Status.ActiveDeployment
-	deploymentStates = r.recalculateDeploymentStates(sortedKeys, deploymentMap, coordination.Status.DeploymentStates, activeDeploymentKey, oldActiveDeploymentKey)
+	// Use previousActiveDeploymentKey if we just cleared an active deployment, otherwise use the old one from status
+	previousActiveForStates := previousActiveDeploymentKey
+	if previousActiveForStates == "" {
+		previousActiveForStates = oldActiveDeploymentKey
+	}
+	deploymentStates = r.recalculateDeploymentStates(sortedKeys, deploymentMap, coordination.Status.DeploymentStates, activeDeploymentKey, previousActiveForStates)
 
 	// Check if there are still deployments that need rollout or are rolling out
 	// This ensures we continue reconciling until all deployments are finished
