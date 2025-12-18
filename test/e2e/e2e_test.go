@@ -100,7 +100,8 @@ var _ = Describe("Manager", Ordered, func() {
 			_, err = utils.Run(cmd)
 			return err
 		}
-		Eventually(deployController, 3*time.Minute, 10*time.Second).Should(Succeed(), "Failed to deploy the controller-manager")
+		Eventually(deployController, 3*time.Minute, 10*time.Second).
+			Should(Succeed(), "Failed to deploy the controller-manager")
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -322,7 +323,7 @@ spec:
   minReadySeconds: 0
 `, coordinationName, testNamespace)
 			coordinationFile := writeTempFile(coordinationYAML)
-			defer os.Remove(coordinationFile)
+			defer func() { _ = os.Remove(coordinationFile) }()
 
 			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
 			_, err := utils.Run(cmd)
@@ -354,7 +355,7 @@ spec:
         - containerPort: 80
 `, i, testNamespace, i, i)
 				deploymentFile := writeTempFile(deploymentYAML)
-				defer os.Remove(deploymentFile)
+				defer func() { _ = os.Remove(deploymentFile) }()
 
 				cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
 				_, err = utils.Run(cmd)
@@ -445,7 +446,7 @@ spec:
   minReadySeconds: 10
 `, coordinationName, testNamespace)
 			coordinationFile := writeTempFile(coordinationYAML)
-			defer os.Remove(coordinationFile)
+			defer func() { _ = os.Remove(coordinationFile) }()
 
 			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
 			_, err := utils.Run(cmd)
@@ -477,7 +478,7 @@ spec:
         - containerPort: 80
 `, i, testNamespace, i, i)
 				deploymentFile := writeTempFile(deploymentYAML)
-				defer os.Remove(deploymentFile)
+				defer func() { _ = os.Remove(deploymentFile) }()
 
 				cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
 				_, err = utils.Run(cmd)
@@ -517,7 +518,7 @@ spec:
   minReadySeconds: 0
 `, coordinationName, testNamespace)
 			coordinationFile := writeTempFile(coordinationYAML)
-			defer os.Remove(coordinationFile)
+			defer func() { _ = os.Remove(coordinationFile) }()
 
 			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
 			_, err := utils.Run(cmd)
@@ -548,7 +549,7 @@ spec:
         - containerPort: 80
 `, testNamespace)
 			deploymentFile := writeTempFile(deploymentYAML)
-			defer os.Remove(deploymentFile)
+			defer func() { _ = os.Remove(deploymentFile) }()
 
 			cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
 			_, err = utils.Run(cmd)
@@ -599,7 +600,7 @@ spec:
   minReadySeconds: 0
 `, coordinationName, testNamespace)
 			coordinationFile := writeTempFile(coordinationYAML)
-			defer os.Remove(coordinationFile)
+			defer func() { _ = os.Remove(coordinationFile) }()
 
 			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
 			_, err := utils.Run(cmd)
@@ -630,7 +631,7 @@ spec:
         - containerPort: 80
 `, testNamespace)
 			deploymentFile := writeTempFile(deploymentYAML)
-			defer os.Remove(deploymentFile)
+			defer func() { _ = os.Remove(deploymentFile) }()
 
 			cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
 			_, err = utils.Run(cmd)
@@ -685,7 +686,7 @@ spec:
   minReadySeconds: 0
 `, coordinationName, testNamespace)
 			coordinationFile := writeTempFile(coordinationYAML)
-			defer os.Remove(coordinationFile)
+			defer func() { _ = os.Remove(coordinationFile) }()
 
 			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
 			_, err := utils.Run(cmd)
@@ -716,7 +717,7 @@ spec:
         - containerPort: 80
 `, testNamespace)
 			deploymentFile := writeTempFile(deploymentYAML)
-			defer os.Remove(deploymentFile)
+			defer func() { _ = os.Remove(deploymentFile) }()
 
 			cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
 			_, err = utils.Run(cmd)

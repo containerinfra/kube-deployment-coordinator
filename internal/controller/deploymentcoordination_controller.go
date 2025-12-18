@@ -330,8 +330,6 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 				coordination.Status.DeploymentStates = deploymentStates
 				if err := r.updateStatusWithRetry(ctx, &coordination, logger); err != nil {
 					logger.Error(err, "unable to update DeploymentCoordination status before activating deployment")
-					// Reset activeDeploymentKey on error
-					activeDeploymentKey = ""
 					return ctrl.Result{}, err
 				}
 				// Now that status is updated, unpause the deployment
