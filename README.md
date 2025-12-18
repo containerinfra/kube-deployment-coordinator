@@ -43,21 +43,9 @@ graph TB
         D3[Deployment 3<br/>Labels: component=nginx]
     end
 
-    subgraph "Coordination Flow"
-        Direction1[1. User creates/updates<br/>Deployment]
-        Direction2[2. Webhook intercepts<br/>and pauses if needed]
-        Direction3[3. Controller watches<br/>DeploymentCoordination]
-        Direction4[4. Controller activates<br/>one deployment]
-        Direction5[5. Deployment rolls out<br/>others remain paused]
-        Direction6[6. Next deployment<br/>activated after ready]
-    end
-
     %% API interactions
-    API -->|"1. CREATE/UPDATE<br/>Deployment"| Webhook
-    Webhook -->|"2. Mutate:<br/>Set spec.paused=true<br/>(if not active)"| API
-    API -->|"3. Store Deployment"| D1
-    API -->|"3. Store Deployment"| D2
-    API -->|"3. Store Deployment"| D3
+    API -->|"CREATE/UPDATE<br/>Deployment"| Webhook
+    Webhook -->|"Mutate:<br/>Set spec.paused=true<br/>(if not active)"| API
 
     %% Controller watching
     API -.->|"Watch DeploymentCoordination"| Controller
@@ -72,13 +60,6 @@ graph TB
     D1 -.->|"Matches selector"| DC
     D2 -.->|"Matches selector"| DC
     D3 -.->|"Matches selector"| DC
-
-    %% Flow
-    Direction1 --> Direction2
-    Direction2 --> Direction3
-    Direction3 --> Direction4
-    Direction4 --> Direction5
-    Direction5 --> Direction6
 
     style Controller fill:#e1f5ff
     style Webhook fill:#fff4e1

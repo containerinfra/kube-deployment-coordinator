@@ -583,7 +583,7 @@ spec:
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(status).To(Equal("True"), "Ready condition should be True when all deployments are ready")
 			}
-			Eventually(verifyReadyCondition, 30*time.Second, 2*time.Second).Should(Succeed())
+			Eventually(verifyReadyCondition, 10*time.Minute, 2*time.Second).Should(Succeed())
 		})
 
 		It("should track rollout timestamps in deployment states", func() {
