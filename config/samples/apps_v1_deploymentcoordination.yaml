@@ -1,0 +1,9 @@
+apiVersion: apps.containerinfra.nl/v1
+kind: DeploymentCoordination
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-deployment-coordinator
+    app.kubernetes.io/managed-by: kustomize
+  name: deploymentcoordination-sample
+spec:
+  # TODO(user): Add fields here

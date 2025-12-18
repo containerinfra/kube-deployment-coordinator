@@ -1,0 +1,29 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: kube-deployment-coordinator-webhook
+  labels:
+    app.kubernetes.io/name: kube-deployment-coordinator
+    app.kubernetes.io/managed-by: kustomize
+webhooks:
+- name: kube-deployment-coordinator.containerinfra.nl
+  clientConfig:
+    service:
+      namespace: system
+      name: webhook-service
+      path: /mutate-apps-v1-deployment
+  rules:
+  - apiGroups:
+    - apps
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - deployments
+  admissionReviewVersions:
+  - v1
+  sideEffects: None
+  failurePolicy: Ignore
+

@@ -1,0 +1,20 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.webhook.serviceName | default "webhook-service" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+spec:
+  type: ClusterIP
+  ports:
+    - name: webhook
+      port: 443
+      protocol: TCP
+      targetPort: 9443
+  selector:
+    {{- include "kubeDeploymentCoordinator.selectorLabels" . | nindent 4 }}
+{{- end }}
+

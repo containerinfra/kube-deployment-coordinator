@@ -1,0 +1,49 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ .Values.webhook.name | default (printf "%s-webhook" (include "kubeDeploymentCoordinator.name" .)) }}
+  labels:
+    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+  {{- with .Values.webhook.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+webhooks:
+- name: {{ .Values.webhook.webhookName | default "kube-deployment-coordinator.containerinfra.nl" }}
+  clientConfig:
+    service:
+      namespace: {{ .Release.Namespace }}
+      name: {{ .Values.webhook.serviceName | default "webhook-service" }}
+      path: {{ .Values.webhook.path | default "/mutate-apps-v1-deployment" }}
+    {{- if .Values.webhook.caBundle }}
+    caBundle: {{ .Values.webhook.caBundle }}
+    {{- end }}
+  rules:
+  - apiGroups:
+    - apps
+    apiVersions:
+    - v1
+    operations:
+    {{- range .Values.webhook.operations }}
+    - {{ . }}
+    {{- end }}
+    resources:
+    - deployments
+  admissionReviewVersions:
+  {{- range .Values.webhook.admissionReviewVersions }}
+  - {{ . }}
+  {{- end }}
+  sideEffects: {{ .Values.webhook.sideEffects | default "None" }}
+  failurePolicy: {{ .Values.webhook.failurePolicy | default "Ignore" }}
+  {{- if .Values.webhook.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml .Values.webhook.namespaceSelector | nindent 4 }}
+  {{- end }}
+  {{- if .Values.webhook.objectSelector }}
+  objectSelector:
+    {{- toYaml .Values.webhook.objectSelector | nindent 4 }}
+  {{- end }}
+{{- end }}
+

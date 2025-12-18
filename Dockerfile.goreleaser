@@ -1,0 +1,5 @@
+FROM gcr.io/distroless/static:nonroot
+EXPOSE 8080 2112
+
+COPY kube-deployment-coordinator /kube-deployment-coordinator
+ENTRYPOINT ["/kube-deployment-coordinator"]

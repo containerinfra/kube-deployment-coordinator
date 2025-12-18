@@ -1,0 +1,35 @@
+{{- if .Values.enableServiceMonitor }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubeDeploymentCoordinator.name" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 7712
+      targetPort: metrics
+  selector:
+    {{- include "kubeDeploymentCoordinator.selectorLabels" . | nindent 4 }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "kubeDeploymentCoordinator.name" . }}
+  labels:
+    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "kubeDeploymentCoordinator.selectorLabels" . | nindent 6 }}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+{{- end }}

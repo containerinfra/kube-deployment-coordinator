@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "kubeDeploymentCoordinator.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubeDeploymentCoordinator.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.minAvailable }}
+  selector:
+    matchLabels:
+    {{- include "kubeDeploymentCoordinator.selectorLabels" . | nindent 6 }}

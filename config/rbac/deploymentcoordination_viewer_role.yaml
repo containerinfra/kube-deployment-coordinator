@@ -1,0 +1,23 @@
+# permissions for end users to view deploymentcoordinations.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-deployment-coordinator
+    app.kubernetes.io/managed-by: kustomize
+  name: deploymentcoordination-viewer-role
+rules:
+- apiGroups:
+  - apps.containerinfra.nl
+  resources:
+  - deploymentcoordinations
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps.containerinfra.nl
+  resources:
+  - deploymentcoordinations/status
+  verbs:
+  - get
