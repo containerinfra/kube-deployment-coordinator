@@ -60,6 +60,18 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" go test $$(go list ./... | grep -v /test/e2e) -coverprofile cover.out
 
+# kind cluster preparation
+.PHONY: kind-cluster-preparation
+kind-cluster-preparation: docker
+	kind create cluster
+
+docker:
+	docker build -t ${IMG} .
+
+.PHONY: test-e2e-kind
+test-e2e-kind: kind-cluster-preparation test-e2e
+	kind delete cluster
+
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run e2e tests (requires Kind cluster).
 	go test ./test/e2e/... -v

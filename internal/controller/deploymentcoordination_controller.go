@@ -56,6 +56,7 @@ type DeploymentCoordinationReconciler struct {
 // +kubebuilder:rbac:groups=apps.containerinfra.nl,resources=deploymentcoordinations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps.containerinfra.nl,resources=deploymentcoordinations/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -177,9 +178,25 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 
 		// Handle active deployment
 		if key == activeDeploymentKey {
-			// Ensure active deployment is not paused
-			if deployment.Spec.Paused {
-				logger.Info("unpausing active deployment", "deployment", key)
+			// Ensure status is updated with active deployment BEFORE unpausing
+			// This prevents the webhook from pausing it again
+			if coordination.Status.ActiveDeployment != activeDeploymentKey {
+				logger.Info("updating status with active deployment before unpausing", "deployment", key)
+				// Recalculate deployment states
+				deploymentStates = r.recalculateDeploymentStates(sortedKeys, deploymentMap, coordination.Status.DeploymentStates, activeDeploymentKey, coordination.Status.ActiveDeployment)
+				r.updateConditions(&coordination, activeDeploymentKey, r.hasPendingRollouts(deploymentMap, activeDeploymentKey), false)
+				coordination.Status.ActiveDeployment = activeDeploymentKey
+				coordination.Status.Deployments = deploymentKeys
+				coordination.Status.DeploymentStates = deploymentStates
+				if err := r.updateStatusWithRetry(ctx, &coordination, logger); err != nil {
+					logger.Error(err, "unable to update DeploymentCoordination status before unpausing")
+					return ctrl.Result{}, err
+				}
+			}
+			// Now that status is updated, ensure active deployment is not paused if it needs to progress
+			needsRollout := r.needsRollout(deployment)
+			if deployment.Spec.Paused && needsRollout {
+				logger.Info("unpausing active deployment (needs rollout)", "deployment", key)
 				if err := r.updateDeploymentPaused(ctx, key, false, logger); err != nil {
 					logger.Error(err, "unable to unpause active deployment", "deployment", key)
 					r.Recorder.Eventf(&coordination, corev1.EventTypeWarning, "UnpauseFailed",
@@ -196,6 +213,8 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 				}
 				r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "DeploymentUnpaused",
 					"Unpaused active deployment %s", key)
+			} else if deployment.Spec.Paused && !needsRollout {
+				logger.V(1).Info("active deployment is paused but doesn't need rollout, keeping paused", "deployment", key)
 			}
 			continue
 		}
@@ -300,11 +319,28 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 
 			if needsRollout && deployment.Spec.Paused {
 				logger.Info("activating deployment (has pending changes)", "deployment", key)
+				// Set active deployment key first
+				activeDeploymentKey = key
+				// Update status BEFORE unpausing to prevent webhook from pausing it again
+				// Recalculate deployment states before updating status
+				deploymentStates = r.recalculateDeploymentStates(sortedKeys, deploymentMap, coordination.Status.DeploymentStates, activeDeploymentKey, coordination.Status.ActiveDeployment)
+				r.updateConditions(&coordination, activeDeploymentKey, r.hasPendingRollouts(deploymentMap, activeDeploymentKey), false)
+				coordination.Status.ActiveDeployment = activeDeploymentKey
+				coordination.Status.Deployments = deploymentKeys
+				coordination.Status.DeploymentStates = deploymentStates
+				if err := r.updateStatusWithRetry(ctx, &coordination, logger); err != nil {
+					logger.Error(err, "unable to update DeploymentCoordination status before activating deployment")
+					// Reset activeDeploymentKey on error
+					activeDeploymentKey = ""
+					return ctrl.Result{}, err
+				}
+				// Now that status is updated, unpause the deployment
+				// The webhook will see it as active and won't pause it
 				if err := r.updateDeploymentPaused(ctx, key, false, logger); err != nil {
 					logger.Error(err, "unable to unpause deployment", "deployment", key)
 					r.Recorder.Eventf(&coordination, corev1.EventTypeWarning, "ActivationFailed",
 						"Failed to activate deployment %s: %v", key, err)
-					r.updateConditions(&coordination, "", r.hasPendingRollouts(deploymentMap, ""), true)
+					r.updateConditions(&coordination, activeDeploymentKey, r.hasPendingRollouts(deploymentMap, activeDeploymentKey), true)
 					if statusErr := r.updateStatusWithRetry(ctx, &coordination, logger); statusErr != nil {
 						logger.Error(statusErr, "unable to update DeploymentCoordination status after activation failure")
 					}
@@ -314,20 +350,8 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 				if err := r.Get(ctx, types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err == nil {
 					deploymentMap[key] = deployment
 				}
-				activeDeploymentKey = key
 				r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "DeploymentActivated",
 					"Activated deployment %s for rollout", key)
-				// Recalculate deployment states before updating status
-				deploymentStates = r.recalculateDeploymentStates(sortedKeys, deploymentMap, coordination.Status.DeploymentStates, activeDeploymentKey, coordination.Status.ActiveDeployment)
-				// Update status and requeue to start tracking the rollout
-				r.updateConditions(&coordination, activeDeploymentKey, r.hasPendingRollouts(deploymentMap, activeDeploymentKey), false)
-				coordination.Status.ActiveDeployment = activeDeploymentKey
-				coordination.Status.Deployments = deploymentKeys
-				coordination.Status.DeploymentStates = deploymentStates
-				if err := r.updateStatusWithRetry(ctx, &coordination, logger); err != nil {
-					logger.Error(err, "unable to update DeploymentCoordination status after activating deployment")
-					return ctrl.Result{}, err
-				}
 				logger.Info("requeuing to track active deployment rollout", "deployment", key)
 				return ctrl.Result{RequeueAfter: time.Second * 10}, nil
 			}

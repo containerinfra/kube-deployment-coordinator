@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -58,10 +59,48 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
 
+		By("waiting for cert-manager webhook to be fully ready")
+		// Wait for cert-manager webhook to be ready and accepting requests
+		// This is necessary because the Certificate resource creation will fail
+		// if cert-manager's webhook isn't ready yet (TLS certificate issues)
+		// The webhook needs time to bootstrap its own TLS certificates
+		verifyCertManagerWebhookReady := func(g Gomega) {
+			// Check that cert-manager-webhook deployment exists and is available
+			cmd := exec.Command("kubectl", "get", "deployment", "cert-manager-webhook",
+				"-n", "cert-manager",
+				"-o", "jsonpath={.status.conditions[?(@.type==\"Available\")].status}")
+			output, err := utils.Run(cmd)
+			// If cert-manager isn't installed, skip the check
+			if err != nil {
+				return
+			}
+			g.Expect(output).To(Equal("True"), "cert-manager-webhook should be available")
+
+			// Check that webhook pods are ready
+			cmd = exec.Command("kubectl", "get", "pods", "-n", "cert-manager",
+				"-l", "app.kubernetes.io/name=cert-manager-webhook",
+				"-o", "jsonpath={.items[*].status.conditions[?(@.type==\"Ready\")].status}")
+			output, err = utils.Run(cmd)
+			if err == nil && output != "" {
+				// All pods should be ready
+				readyCount := strings.Count(output, "True")
+				g.Expect(readyCount).To(BeNumerically(">", 0), "At least one cert-manager-webhook pod should be ready")
+			}
+		}
+		Eventually(verifyCertManagerWebhookReady, 3*time.Minute, 5*time.Second).Should(Succeed())
+
+		// Additional wait to ensure webhook TLS certificates are fully ready
+		// Cert-manager webhook needs time to bootstrap its own certificates
+		time.Sleep(10 * time.Second)
+
 		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+		// Retry deployment in case cert-manager webhook isn't ready yet
+		deployController := func() error {
+			cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+			_, err = utils.Run(cmd)
+			return err
+		}
+		Eventually(deployController, 3*time.Minute, 10*time.Second).Should(Succeed(), "Failed to deploy the controller-manager")
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -245,17 +284,469 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+	})
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput := getMetricsOutput()
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+	Context("DeploymentCoordination", func() {
+		const testNamespace = "e2e-coordination-test"
+		const coordinationName = "test-coordination"
+
+		BeforeEach(func() {
+			By("creating test namespace")
+			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+			_, err := utils.Run(cmd)
+			// Ignore error if namespace already exists
+			_ = err
+		})
+
+		AfterEach(func() {
+			By("cleaning up test resources")
+			cmd := exec.Command("kubectl", "delete", "deployment", "--all", "-n", testNamespace)
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "deploymentcoordination", "--all", "-n", testNamespace)
+			_, _ = utils.Run(cmd)
+			cmd = exec.Command("kubectl", "delete", "ns", testNamespace)
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should coordinate multiple deployments to roll out one at a time", func() {
+			By("creating a DeploymentCoordination resource")
+			coordinationYAML := fmt.Sprintf(`apiVersion: apps.containerinfra.nl/v1
+kind: DeploymentCoordination
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  labelSelector:
+    matchLabels:
+      coordinated: "true"
+  minReadySeconds: 0
+`, coordinationName, testNamespace)
+			coordinationFile := writeTempFile(coordinationYAML)
+			defer os.Remove(coordinationFile)
+
+			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create DeploymentCoordination")
+
+			By("creating three deployments that match the label selector")
+			for i := 1; i <= 3; i++ {
+				deploymentYAML := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment-%d
+  namespace: %s
+  labels:
+    coordinated: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deployment-%d
+  template:
+    metadata:
+      labels:
+        app: deployment-%d
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+`, i, testNamespace, i, i)
+				deploymentFile := writeTempFile(deploymentYAML)
+				defer os.Remove(deploymentFile)
+
+				cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create deployment-%d", i)
+			}
+
+			By("verifying that only one deployment is active at a time")
+			verifyCoordination := func(g Gomega) {
+				// Get the DeploymentCoordination status
+				cmd := exec.Command("kubectl", "get", "deploymentcoordination", coordinationName,
+					"-n", testNamespace, "-o", "jsonpath={.status.activeDeployment}")
+				activeDeployment, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+
+				// Get all deployments and their paused status
+				cmd = exec.Command("kubectl", "get", "deployment", "-n", testNamespace,
+					"-o", "jsonpath={range .items[*]}{.metadata.name}{' '}{.spec.paused}{'\\n'}{end}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+
+				lines := utils.GetNonEmptyLines(output)
+				g.Expect(lines).To(HaveLen(3), "Expected 3 deployments")
+
+				unpausedCount := 0
+				unpausedDeployments := []string{}
+				for _, line := range lines {
+					// Line format: "deployment-name true" or "deployment-name false"
+					// Split by space - last part is the paused status
+					parts := strings.Fields(line)
+					if len(parts) >= 2 {
+						name := parts[0]
+						paused := parts[len(parts)-1] // Get last field in case name has spaces
+						if paused == "false" {
+							unpausedCount++
+							unpausedDeployments = append(unpausedDeployments, name)
+						}
+					}
+				}
+
+				// If there's an active deployment, exactly one should be unpaused
+				// If there's no active deployment (all finished), all should be paused
+				if activeDeployment != "" {
+					g.Expect(unpausedCount).To(Equal(1),
+						"Expected exactly one unpaused deployment when active deployment exists. Active: %s, Unpaused: %v",
+						activeDeployment, unpausedDeployments)
+					// Verify the active deployment is the one that's unpaused
+					// Extract just the name from the active deployment key (namespace/name)
+					activeName := activeDeployment
+					if strings.Contains(activeDeployment, "/") {
+						parts := strings.Split(activeDeployment, "/")
+						activeName = parts[len(parts)-1]
+					}
+					g.Expect(unpausedDeployments).To(ContainElement(activeName),
+						"Active deployment %s should be unpaused", activeDeployment)
+				} else {
+					// No active deployment - all should be paused (or at most one might be finishing)
+					g.Expect(unpausedCount).To(BeNumerically("<=", 1),
+						"Expected at most one unpaused deployment when no active deployment. Unpaused: %v",
+						unpausedDeployments)
+				}
+			}
+			Eventually(verifyCoordination, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying that deployments are listed in status")
+			verifyStatus := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deploymentcoordination", coordinationName,
+					"-n", testNamespace, "-o", "jsonpath={.status.deployments}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("deployment-1"))
+				g.Expect(output).To(ContainSubstring("deployment-2"))
+				g.Expect(output).To(ContainSubstring("deployment-3"))
+			}
+			Eventually(verifyStatus, 30*time.Second, 2*time.Second).Should(Succeed())
+		})
+
+		It("should respect MinReadySeconds before activating next deployment", func() {
+			By("creating a DeploymentCoordination with MinReadySeconds")
+			coordinationYAML := fmt.Sprintf(`apiVersion: apps.containerinfra.nl/v1
+kind: DeploymentCoordination
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  labelSelector:
+    matchLabels:
+      coordinated: "true"
+  minReadySeconds: 10
+`, coordinationName, testNamespace)
+			coordinationFile := writeTempFile(coordinationYAML)
+			defer os.Remove(coordinationFile)
+
+			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create DeploymentCoordination")
+
+			By("creating two deployments")
+			for i := 1; i <= 2; i++ {
+				deploymentYAML := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment-%d
+  namespace: %s
+  labels:
+    coordinated: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deployment-%d
+  template:
+    metadata:
+      labels:
+        app: deployment-%d
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+`, i, testNamespace, i, i)
+				deploymentFile := writeTempFile(deploymentYAML)
+				defer os.Remove(deploymentFile)
+
+				cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to create deployment-%d", i)
+			}
+
+			By("waiting for first deployment to be active and ready")
+			verifyFirstDeploymentReady := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "deployment-1",
+					"-n", testNamespace, "-o", "jsonpath={.status.readyReplicas}")
+				readyReplicas, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(readyReplicas).To(Equal("1"), "deployment-1 should have 1 ready replica")
+			}
+			Eventually(verifyFirstDeploymentReady, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying that second deployment remains paused during MinReadySeconds")
+			// Immediately after first deployment is ready, second should still be paused
+			cmd = exec.Command("kubectl", "get", "deployment", "deployment-2",
+				"-n", testNamespace, "-o", "jsonpath={.spec.paused}")
+			paused, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(paused).To(Equal("true"), "deployment-2 should be paused during MinReadySeconds")
+		})
+
+		It("should update status conditions correctly", func() {
+			By("creating a DeploymentCoordination resource")
+			coordinationYAML := fmt.Sprintf(`apiVersion: apps.containerinfra.nl/v1
+kind: DeploymentCoordination
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  labelSelector:
+    matchLabels:
+      coordinated: "true"
+  minReadySeconds: 0
+`, coordinationName, testNamespace)
+			coordinationFile := writeTempFile(coordinationYAML)
+			defer os.Remove(coordinationFile)
+
+			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create DeploymentCoordination")
+
+			By("creating a deployment")
+			deploymentYAML := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment-1
+  namespace: %s
+  labels:
+    coordinated: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deployment-1
+  template:
+    metadata:
+      labels:
+        app: deployment-1
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+`, testNamespace)
+			deploymentFile := writeTempFile(deploymentYAML)
+			defer os.Remove(deploymentFile)
+
+			cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create deployment")
+
+			By("verifying that Progressing condition is set when deployment is rolling out")
+			verifyProgressingCondition := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deploymentcoordination", coordinationName,
+					"-n", testNamespace, "-o", "jsonpath={.status.conditions[?(@.type==\"Progressing\")].status}")
+				status, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(status).To(Equal("True"), "Progressing condition should be True when rolling out")
+			}
+			Eventually(verifyProgressingCondition, 30*time.Second, 2*time.Second).Should(Succeed())
+
+			By("waiting for deployment to be ready")
+			verifyDeploymentReady := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "deployment-1",
+					"-n", testNamespace, "-o", "jsonpath={.status.readyReplicas}")
+				readyReplicas, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(readyReplicas).To(Equal("1"), "deployment should have 1 ready replica")
+			}
+			Eventually(verifyDeploymentReady, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying that Ready condition is set when all deployments are ready")
+			verifyReadyCondition := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deploymentcoordination", coordinationName,
+					"-n", testNamespace, "-o", "jsonpath={.status.conditions[?(@.type==\"Ready\")].status}")
+				status, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(status).To(Equal("True"), "Ready condition should be True when all deployments are ready")
+			}
+			Eventually(verifyReadyCondition, 30*time.Second, 2*time.Second).Should(Succeed())
+		})
+
+		It("should track rollout timestamps in deployment states", func() {
+			By("creating a DeploymentCoordination resource")
+			coordinationYAML := fmt.Sprintf(`apiVersion: apps.containerinfra.nl/v1
+kind: DeploymentCoordination
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  labelSelector:
+    matchLabels:
+      coordinated: "true"
+  minReadySeconds: 0
+`, coordinationName, testNamespace)
+			coordinationFile := writeTempFile(coordinationYAML)
+			defer os.Remove(coordinationFile)
+
+			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create DeploymentCoordination")
+
+			By("creating a deployment")
+			deploymentYAML := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment-1
+  namespace: %s
+  labels:
+    coordinated: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deployment-1
+  template:
+    metadata:
+      labels:
+        app: deployment-1
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+`, testNamespace)
+			deploymentFile := writeTempFile(deploymentYAML)
+			defer os.Remove(deploymentFile)
+
+			cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create deployment")
+
+			By("verifying that LastRolloutStarted timestamp is set")
+			verifyRolloutStarted := func(g Gomega) {
+				deploymentKey := fmt.Sprintf("%s/deployment-1", testNamespace)
+				jsonpath := fmt.Sprintf("{.status.deploymentStates[?(@.name==\"%s\")].lastRolloutStarted}", deploymentKey)
+				cmd := exec.Command("kubectl", "get", "deploymentcoordination", coordinationName,
+					"-n", testNamespace, "-o", fmt.Sprintf("jsonpath=%s", jsonpath))
+				timestamp, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(timestamp).NotTo(BeEmpty(), "LastRolloutStarted should be set")
+			}
+			Eventually(verifyRolloutStarted, 30*time.Second, 2*time.Second).Should(Succeed())
+
+			By("waiting for deployment to be ready")
+			verifyDeploymentReady := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "deployment-1",
+					"-n", testNamespace, "-o", "jsonpath={.status.readyReplicas}")
+				readyReplicas, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(readyReplicas).To(Equal("1"), "deployment should have 1 ready replica")
+			}
+			Eventually(verifyDeploymentReady, 2*time.Minute, 5*time.Second).Should(Succeed())
+
+			By("verifying that LastRolloutFinished timestamp is set")
+			verifyRolloutFinished := func(g Gomega) {
+				deploymentKey := fmt.Sprintf("%s/deployment-1", testNamespace)
+				jsonpath := fmt.Sprintf("{.status.deploymentStates[?(@.name==\"%s\")].lastRolloutFinished}", deploymentKey)
+				cmd := exec.Command("kubectl", "get", "deploymentcoordination", coordinationName,
+					"-n", testNamespace, "-o", fmt.Sprintf("jsonpath=%s", jsonpath))
+				timestamp, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(timestamp).NotTo(BeEmpty(), "LastRolloutFinished should be set")
+			}
+			Eventually(verifyRolloutFinished, 30*time.Second, 2*time.Second).Should(Succeed())
+		})
+
+		It("should pause deployments via webhook when they match coordination", func() {
+			By("creating a DeploymentCoordination resource")
+			coordinationYAML := fmt.Sprintf(`apiVersion: apps.containerinfra.nl/v1
+kind: DeploymentCoordination
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  labelSelector:
+    matchLabels:
+      coordinated: "true"
+  minReadySeconds: 0
+`, coordinationName, testNamespace)
+			coordinationFile := writeTempFile(coordinationYAML)
+			defer os.Remove(coordinationFile)
+
+			cmd := exec.Command("kubectl", "apply", "-f", coordinationFile)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create DeploymentCoordination")
+
+			By("creating a deployment that matches the label selector")
+			deploymentYAML := fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployment-1
+  namespace: %s
+  labels:
+    coordinated: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deployment-1
+  template:
+    metadata:
+      labels:
+        app: deployment-1
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+`, testNamespace)
+			deploymentFile := writeTempFile(deploymentYAML)
+			defer os.Remove(deploymentFile)
+
+			cmd = exec.Command("kubectl", "apply", "-f", deploymentFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to create deployment")
+
+			By("verifying that the deployment is paused by the webhook")
+			verifyPaused := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "deployment-1",
+					"-n", testNamespace, "-o", "jsonpath={.spec.paused}")
+				paused, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				// The webhook should pause it, or the controller will pause it
+				// Either way, it should be paused initially
+				g.Expect(paused).To(Equal("true"), "deployment should be paused by webhook or controller")
+			}
+			Eventually(verifyPaused, 10*time.Second, 1*time.Second).Should(Succeed())
+		})
 	})
 })
+
+// writeTempFile writes content to a temporary file and returns the file path
+func writeTempFile(content string) string {
+	tmpfile, err := os.CreateTemp("", "e2e-test-*.yaml")
+	Expect(err).NotTo(HaveOccurred())
+	_, err = tmpfile.WriteString(content)
+	Expect(err).NotTo(HaveOccurred())
+	err = tmpfile.Close()
+	Expect(err).NotTo(HaveOccurred())
+	return tmpfile.Name()
+}
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
 // It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
