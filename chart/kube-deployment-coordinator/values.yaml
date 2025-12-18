@@ -30,6 +30,7 @@ healthPort: 7713
 
 replicaCount: 1
 minAvailable: 1
+enablePodDisruptionBudget: false
 
 service:
   type: ClusterIP
