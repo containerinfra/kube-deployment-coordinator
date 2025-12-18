@@ -61,6 +61,8 @@ type DeploymentCoordinationReconciler struct {
 // move the current state of the cluster closer to the desired state.
 // It coordinates deployments matching the label selector to ensure only one
 // deployment rolls out at a time.
+//
+//nolint:gocyclo
 func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -86,28 +88,18 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
-	// Build list of deployment keys and states
+	// Build list of deployment keys
 	deploymentKeys := make([]string, 0, len(deployments.Items))
 	deploymentMap := make(map[string]*appsv1k8s.Deployment)
-	deploymentStates := make([]appsv1.DeploymentState, 0, len(deployments.Items))
 	for i := range deployments.Items {
 		deployment := &deployments.Items[i]
 		key := getDeploymentKeyForCoordination(deployment)
 		deploymentKeys = append(deploymentKeys, key)
 		deploymentMap[key] = deployment
-
-		// Track deployment state
-		// HasPendingChanges means the deployment needs rollout (based on replica counts or new spec)
-		// We prioritize replica counts over generation because observedGeneration can be
-		// updated before the rollout actually completes
-		needsRollout := r.needsRollout(deployment)
-		state := appsv1.DeploymentState{
-			Name:              key,
-			HasPendingChanges: needsRollout,
-			Generation:        deployment.Generation,
-		}
-		deploymentStates = append(deploymentStates, state)
 	}
+	// Note: deploymentStates will be calculated later using recalculateDeploymentStates()
+	// to ensure accuracy after all deployment updates are complete
+	var deploymentStates []appsv1.DeploymentState
 
 	// Get current active deployment from status
 	activeDeploymentKey := coordination.Status.ActiveDeployment
@@ -276,7 +268,6 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 			if isRollingOut {
 				logger.Info("deployment is rolling out, setting as active", "deployment", key)
 				activeDeploymentKey = key
-				activeDeployment = deployment
 				r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "DeploymentActivated",
 					"Activated deployment %s (already rolling out)", key)
 				// Recalculate deployment states before updating status
@@ -322,10 +313,6 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 				// Refresh deployment in map after update
 				if err := r.Get(ctx, types.NamespacedName{Namespace: deployment.Namespace, Name: deployment.Name}, deployment); err == nil {
 					deploymentMap[key] = deployment
-					activeDeployment = deployment
-				} else {
-					// If we can't refresh, use the existing deployment object
-					activeDeployment = deployment
 				}
 				activeDeploymentKey = key
 				r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "DeploymentActivated",
@@ -397,11 +384,9 @@ func (r *DeploymentCoordinationReconciler) Reconcile(ctx context.Context, req ct
 	// Record event if active deployment changed
 	if oldActiveDeploymentKey != activeDeploymentKey {
 		if activeDeploymentKey != "" {
-			r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "ActiveDeploymentChanged",
-				"Active deployment changed from %s to %s", oldActiveDeploymentKey, activeDeploymentKey)
+			r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "ActiveDeploymentChanged", "Active deployment changed from %s to %s", oldActiveDeploymentKey, activeDeploymentKey)
 		} else if oldActiveDeploymentKey != "" {
-			r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "ActiveDeploymentCleared",
-				"Active deployment %s cleared (no active deployment)", oldActiveDeploymentKey)
+			r.Recorder.Eventf(&coordination, corev1.EventTypeNormal, "ActiveDeploymentCleared", "Active deployment %s cleared (no active deployment)", oldActiveDeploymentKey)
 		}
 	}
 
@@ -459,18 +444,12 @@ func (r *DeploymentCoordinationReconciler) recalculateDeploymentStates(sortedKey
 		// Also consider if this deployment is the active one - it should be considered as rolling out
 		// even if replica counts haven't changed yet
 		isActiveDeployment := key == activeDeploymentKey
-		wasActiveDeployment := key == previousActiveDeploymentKey
 		shouldBeRollingOut := isRollingOut || (isActiveDeployment && needsRollout)
 
 		// If it was the active deployment before, it was likely rolling out
 		// This helps catch cases where timestamps weren't set initially
-		if wasActiveDeployment && !wasRollingOut {
-			// It was active but we don't have a start time - it might have just become active
-			// or the timestamp wasn't tracked. If it's still active, set start time if missing.
-			if isActiveDeployment && !isRollingOut && needsRollout {
-				// Just became active - will be handled below
-			}
-		}
+		// Note: The case where isActiveDeployment && !isRollingOut && needsRollout
+		// (just became active) is handled in the logic below
 
 		state := appsv1.DeploymentState{
 			Name:              key,

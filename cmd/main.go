@@ -72,7 +72,8 @@ func main() {
 		"Enabling this will ensure there is only one active controller manager.")
 	flag.StringVar(&leaderElectionID, "leader-election-id", "kube-deployment-coordinator.containerinfra.nl",
 		"The ID to use for leader election. This should be unique per controller instance.")
-	flag.BoolVar(&secureMetrics, "metrics-secure", true, "If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
+	flag.BoolVar(&secureMetrics, "metrics-secure", true,
+		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false, "If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "",
 		"Directory containing webhook server certificate and key (tls.crt, tls.key). "+
