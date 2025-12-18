@@ -10,7 +10,7 @@ spec:
   type: ClusterIP
   ports:
     - name: metrics
-      port: 7712
+      port: {{ .Values.metricsPort }}
       targetPort: metrics
   selector:
     {{- include "kubeDeploymentCoordinator.selectorLabels" . | nindent 4 }}

@@ -23,6 +23,11 @@ fullnameOverride: ""
 extraArgs: []
 envFrom: []
 
+# Metrics and health probe ports
+# These ports are used for container ports and to construct bind addresses (format: ":PORT")
+metricsPort: 7712
+healthPort: 7713
+
 replicaCount: 1
 minAvailable: 1
 
