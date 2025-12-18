@@ -21,6 +21,89 @@ The `kube-deployment-coordinator` is a Kubernetes operator that manages the coor
 - Pauses non-active deployments automatically
 - Records Kubernetes events
 
+## Architecture
+
+The following diagram illustrates how `kube-deployment-coordinator` operates within a Kubernetes cluster:
+
+```mermaid
+graph TB
+    subgraph "Kubernetes API Server"
+        API[API Server]
+    end
+
+    subgraph "kube-deployment-coordinator-system namespace"
+        Controller[Controller Pod<br/>DeploymentCoordination Controller]
+        Webhook[Webhook Server<br/>Port 9443]
+    end
+
+    subgraph "User Namespace"
+        DC[DeploymentCoordination<br/>CRD Resource]
+        D1[Deployment 1<br/>Labels: component=nginx]
+        D2[Deployment 2<br/>Labels: component=nginx]
+        D3[Deployment 3<br/>Labels: component=nginx]
+    end
+
+    subgraph "Coordination Flow"
+        Direction1[1. User creates/updates<br/>Deployment]
+        Direction2[2. Webhook intercepts<br/>and pauses if needed]
+        Direction3[3. Controller watches<br/>DeploymentCoordination]
+        Direction4[4. Controller activates<br/>one deployment]
+        Direction5[5. Deployment rolls out<br/>others remain paused]
+        Direction6[6. Next deployment<br/>activated after ready]
+    end
+
+    %% API interactions
+    API -->|"1. CREATE/UPDATE<br/>Deployment"| Webhook
+    Webhook -->|"2. Mutate:<br/>Set spec.paused=true<br/>(if not active)"| API
+    API -->|"3. Store Deployment"| D1
+    API -->|"3. Store Deployment"| D2
+    API -->|"3. Store Deployment"| D3
+
+    %% Controller watching
+    API -.->|"Watch DeploymentCoordination"| Controller
+    API -.->|"Watch Deployments"| Controller
+    Controller -->|"Update status"| API
+    Controller -->|"Unpause active<br/>Pause others"| API
+
+    %% Coordination resource
+    DC -.->|"Defines coordination<br/>via labelSelector"| Controller
+
+    %% Deployment matching
+    D1 -.->|"Matches selector"| DC
+    D2 -.->|"Matches selector"| DC
+    D3 -.->|"Matches selector"| DC
+
+    %% Flow
+    Direction1 --> Direction2
+    Direction2 --> Direction3
+    Direction3 --> Direction4
+    Direction4 --> Direction5
+    Direction5 --> Direction6
+
+    style Controller fill:#e1f5ff
+    style Webhook fill:#fff4e1
+    style DC fill:#e8f5e9
+    style D1 fill:#f3e5f5
+    style D2 fill:#f3e5f5
+    style D3 fill:#f3e5f5
+    style API fill:#ffebee
+```
+
+### Component Interactions
+
+1. **Mutating Webhook**: Intercepts all `Deployment` CREATE and UPDATE operations. If a deployment matches a `DeploymentCoordination` resource's label selector but is not the active deployment, it automatically sets `spec.paused=true`.
+
+2. **Controller**: 
+   - Watches `DeploymentCoordination` resources and matching `Deployment` resources
+   - Manages the coordination state by updating the `DeploymentCoordination` status
+   - Activates one deployment at a time by unpausing it
+   - Tracks rollout progress using replica counts
+   - Waits for `MinReadySeconds` before activating the next deployment
+
+3. **DeploymentCoordination CRD**: Defines which deployments should be coordinated using a label selector and optional `minReadySeconds` setting.
+
+4. **Coordinated Deployments**: Deployments with labels matching the `DeploymentCoordination` selector are automatically managed by the controller.
+
 ## Use Cases
 
 ### Multiple Deployments with Different Pod Configurations
