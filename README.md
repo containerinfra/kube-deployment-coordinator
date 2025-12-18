@@ -2,9 +2,11 @@
 
 A Kubernetes controller that coordinates the rollout of multiple deployments to ensure only one deployment rolls out at a time. This prevents resource contention and ensures predictable, sequential rollouts across related deployments.
 
-> **Note:** This project targets a niche coordination problem in Kubernetes: ensuring _sequential rollouts_ across multiple Deployments that _should not_ be updated in parallel. Most users of Kubernetes do **not** need this—native Deployments already support rolling updates, readiness checks, and gradual rollout. If you are not explicitly running multiple Deployments for the same app (for example, with different network or node configurations) and struggling with them being updated at the same time (usually by GitOps tools), you are likely solving the wrong problem, or employing an anti-pattern in your architecture.  
-
-If this situation fits your use-case, you'll know; otherwise, consider revisiting your deployment strategy before adopting this solution.
+> **Note:** This project targets a niche coordination problem in Kubernetes: ensuring _sequential rollouts_ across multiple Deployments that _should not_ be updated in parallel. 
+> 
+> Most users of Kubernetes do **not** need this—native Deployments already support rolling updates, readiness checks, and gradual rollout. If you are not explicitly running multiple Deployments for the same app (for example, with different network or node configurations) and struggling with them being updated at the same time (usually by GitOps tools), you are likely solving the wrong problem, or employing an anti-pattern in your architecture.  
+> 
+> If this situation fits your use-case, you'll know; otherwise, consider revisiting your deployment strategy before adopting this solution.
 
 ## Overview
 
