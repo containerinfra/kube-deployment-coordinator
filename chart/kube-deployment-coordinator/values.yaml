@@ -78,18 +78,8 @@ tolerations: []
 
 affinity: {}
 
-hpa:
-# enable/disable the horizontal pod scaler and define its behaviour
-  enabled: false
-  minReplicas: 2
-  maxReplicas: 4
-  cpu:
-    targetType: Utilization
-    averageUtilization: 90
-
 # enable or disable the deployment of the Service monitor
 enableServiceMonitor: true
-
 
 leaderElection:
   enabled: false
